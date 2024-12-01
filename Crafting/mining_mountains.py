@@ -1,21 +1,64 @@
 from py_stealth.methods import *
-from datetime import datetime as dt
+from datetime import timedelta, datetime as dt
 import math
 import inspect
+import pickle
+
+
+#######################
+
+
+# TODO:
+# 1. разогнать, ибо сейчас в радиусе поиска тайлы, которые внутри горного массива, до которых ему
+# никак не дойти. Либо статику лишнюю исключить из массива ли по-другому путь проверять
+#
+# 2. Унифицировать функции с ламбером: логгирование, перемещение, инструменты и т д
+# сейчас оно просто тупо продублировано внутри этого, без импортов
+#
+# 3. Заход в банк переделать, ибо айди двери меняется
+# 4. Открытие банка переделать, ибо айди банкбокса тоже, блядь, меняется
+#
+# 5. Приделать лошадь
+#
+# 6. Приделать еду из ламбера
+#
+# 7. Унифицировать для копки в шахте (вход/выход, регион, тайлы, статику)
+
+
+#######################
+
+REGION_BORDERS = {  'x_min' : 2320,
+                    'x_max' : 2545,
+                    'y_min' : 810,
+                    'y_max' : 920,
+}
+
 # Can be changed
 TILE_SEARCH_RANGE = 5
 WEIGHT_TO_PACK = 450
 WEIGHT_TO_UNLOAD = 200
-WEIGHT_TO_SMELT = 460
+WEIGHT_TO_SMELT = 200
 INITIAL_LOCATION = (2349, 887)
 FORGE_LOCATION = (2477, 888)
+FORGE_POINT = (2479, 890)
+
 BANK_ENTRY = (2476, 861)
-BANK_ENTRY_DOOR = 0x4023A70C
+BANK_ENTRY_DOOR = 0x4000F996 # 0x4000A9D1
 BANK_INSIDE = (3438, 3422)
 BANK_EXIT = (3445, 3442)
-BANK_EXIT_DOOR = 0x4023AA50
+BANK_EXIT_DOOR = 0x4000AD4E
+
+BANK_BOX_TYPE = 0x0436
+BANK_BOX_ID = 0x4000FC13 # 0x4000AC58
+
+
+GUMP_TINKER_TOOLS_CATEGORY_TOOLS = 29
+GUMP_TINKER_TOOLS_TINKER_TOOLS_BUTTON = 128
+GUMP_TINKER_TOOLS_SHOWEL_BUTTON = 100
+GUMP_TINKER_ID = 0x7B28E708
+
 POINTS = [
-    (2342, 873),
+    (2341, 872),
     (2369, 864),
     (2389, 849),
     (2383, 857),
@@ -70,12 +113,13 @@ INGOTS = 0x1BF2
 #SHOVEL = 0x0F3A
 SHOVEL = 0x0F39
 MINING_BAG = 0x1C10
-TINKER_TOOLS = 0x1EB8
+TINKER_TOOLS = 0x6708 #0x1EB8
 ORE = 0x19B9
 
 
 # Generic messages and tiles
-SKIP_TILE_MESSAGES = ["no metal", "far away", "cannot be seen", "can't mine"]
+BAD_TILE_MESSAGES = ["far away", "cannot be seen", "can't mine"]
+DEPLETED_TILE_MESSAGES = ["no metal"]
 NEXT_TRY_MESSAGES = ["loosen", "You dig some", "You dig up"]
 # From UA sources
 CAVE_TILES = [
@@ -117,6 +161,49 @@ CAVE_TILES = [
 ]
 ##########
 
+Bad_points = []
+Mined_tiles = []
+
+def load_pickle(filepath):
+    """
+    safe loads pickle file by filepath
+    returns empty array if failed to load the file
+    """
+    try:
+        loaded = pickle.load(open(filepath, 'rb'))
+        return loaded
+    except:
+        return []
+
+def save_pickle_to_file(mytuple, filepath):
+    pickle.dump(mytuple, open(filepath, 'wb'))
+
+def set_tile_mined(tile):
+# append Mined_tiles with coord and dt.now()
+    _tile = { 'x' : tile['x'],'y' : tile['y'] }
+    _tile['resetTime'] = dt.now() + timedelta(minutes=20)
+    Mined_tiles.append(_tile)
+
+def is_tile_mined(tile):
+# returns True if mined and False respectively
+    # log(f"is tile mined? {tile}")
+    # Wait(100)
+    for _tile in Mined_tiles:
+        if (_tile['x'] == tile['x']) and (_tile['y'] == tile['y']):
+            if _tile['resetTime'] < dt.now():
+                Mined_tiles.remove(_tile)
+                return False
+            else:
+                # log(f"point is in mined tiles {_tile['x']}, {_tile['y']}")
+                # Wait(100)
+                return True
+    for _x,_y,_ in Bad_points: # shitty but fast workaround TODO: refactor
+        if (_x == tile['x']) and (_y == tile['y']):
+            # log(f"point is in Bad tiles {_x}, {_y}")
+            # Wait(100)
+            return True
+
+    return False
 
 def log(message=""):
     if VERBOSE:
@@ -129,23 +216,32 @@ def cancel_targets():
         CancelTarget()
 
 
-def find_tiles(center_x: int, center_y: int, radius: int) -> set[int, int, int, int]:
+def find_tiles(radius: int, center_x: int, center_y: int) -> set[int, int, int, int]:
     _min_x, _min_y = center_x-radius, center_y-radius
     _max_x, _max_y = center_x+radius, center_y+radius
     _tiles_coordinates = []
+    # log(f"Looking for tiles")
+    # _dt_started=dt.now()
 
-    for tile in CAVE_TILES:
-        _tiles_coordinates += GetStaticTilesArray(
-            _min_x, _min_y, _max_x, _max_y, WorldNum(), tile)
+    _tiles_coordinates += GetStaticTilesArray(
+            _min_x, _min_y, _max_x, _max_y, WorldNum(), CAVE_TILES)
+    _tiles_coordinates += GetLandTilesArray(
+            _min_x, _min_y, _max_x, _max_y, WorldNum(), CAVE_TILES)
+    # for tile in CAVE_TILES:
+    #     # print(f"tile {tile}")
 
-        _tiles_coordinates += GetLandTilesArray(
-            _min_x, _min_y, _max_x, _max_y, WorldNum(), tile)
+    #     _tiles_coordinates += GetStaticTilesArray(
+    #         _min_x, _min_y, _max_x, _max_y, WorldNum(), tile)
+    #     log(GetLandTileData())
+    #     _tiles_coordinates += GetLandTilesArray(
+    #         _min_x, _min_y, _max_x, _max_y, WorldNum(), tile)
 
-    log(f"Found {str(len(_tiles_coordinates))} tiles")
+    # log(f"Found {str(len(_tiles_coordinates))} tiles in {dt.now()-_dt_started}")
     return _tiles_coordinates
 
 
 def to_bag() -> None:
+    log("Packing...")
     if bag := FindType(MINING_BAG, Backpack()):
         # Can't use while cuz of item limit in bag
         if FindType(ORE, Backpack()):
@@ -155,6 +251,7 @@ def to_bag() -> None:
 
 
 def smelt():
+    log("Smelting...")
     IgnoreReset()
     forge_x, forge_y = FORGE_LOCATION
     move_x_y(forge_x, forge_y)
@@ -175,16 +272,25 @@ def smelt():
 
 
 def craft_item(tool_category: int, tool_button: int, tool_type: int, item_type: int, required_qty: int) -> None:
+    log("Crafting... TODO: FIX qty checks, tinker tools worn out during craft")
     while Count(item_type) < required_qty:
         for _gump_counter in range(0, GetGumpsCount()):
             CloseSimpleGump(_gump_counter)
 
         if FindType(tool_type, Backpack()):
-            UseType(tool_type, 0x0000)
-            Wait(500)
-            wait_for_gump(tool_category)
-            wait_for_gump(tool_button)
-            wait_for_gump(0)
+            _tool_obj = FindItem()
+            log("equipping tool...")
+            while not ObjAtLayer(RhandLayer())==_tool_obj:
+                Equip(RhandLayer(), FindItem())
+                Wait(500)
+            log("equipped the tool...")
+            while True:
+                UseObject(_tool_obj)
+                Wait(500)
+                log("waiting for gump...")
+                wait_for_gump(tool_category)
+                wait_for_gump(tool_button)
+                wait_for_gump(0)
 
 
 def find_gump(gump_id: int) -> bool:
@@ -196,7 +302,7 @@ def find_gump(gump_id: int) -> bool:
 
 def wait_for_gump(button: int) -> None:
     _try = 0
-    while not find_gump(0x38920ABD):
+    while not find_gump(GUMP_TINKER_ID):
         _try += 1
         Wait(500)
         if _try > 30:
@@ -209,44 +315,78 @@ def wait_for_gump(button: int) -> None:
 
 def mine(tile):
     tile, x, y, z = tile
-
+    _bad = False
     if newMoveXY(x, y, True, 2, True):
         while not Dead():
             # Smelt and return back to mining point
             if Weight() > WEIGHT_TO_PACK:
                 Wait(1000)
                 to_bag()
-                if Weight() > WEIGHT_TO_SMELT:
-                    smelt()
-                    if Weight() > WEIGHT_TO_UNLOAD:
-                        unload_to_bank()
-                    move_x_y(x, y)
+            if Weight() > WEIGHT_TO_SMELT:
+                smelt()
+            # if Weight() > WEIGHT_TO_UNLOAD:
+                unload_to_bank()
+                move_x_y(x, y)
 
             started = dt.now()
             cancel_targets()
-            if FindType(SHOVEL, Backpack()):
-                UseType(SHOVEL, 0xFFFF)
-            else:
-                craft_item(8, 23, TINKER_TOOLS, TINKER_TOOLS, 2)
-                craft_item(8, 86, TINKER_TOOLS, SHOVEL, 2)
+
+            if not GetType( ObjAtLayer(LhandLayer()))==SHOVEL:
+                while ObjAtLayer(LhandLayer()):
+                    UnEquip(LhandLayer())
+                    Wait(500)
+                while ObjAtLayer(RhandLayer()):
+                    UnEquip(RhandLayer())
+                    Wait(500)
+
+                if FindType(SHOVEL, Backpack()):
+                    log("Tool found, equipping!")
+                    Equip(LhandLayer(), FindItem())
+                    Wait(500)
+                elif Connected():
+                    log("No more tools left in pack! Trying to craft...")
+
+                    craft_item(GUMP_TINKER_TOOLS_CATEGORY_TOOLS, GUMP_TINKER_TOOLS_TINKER_TOOLS_BUTTON, TINKER_TOOLS, TINKER_TOOLS, 1)
+                    craft_item(GUMP_TINKER_TOOLS_CATEGORY_TOOLS, GUMP_TINKER_TOOLS_SHOWEL_BUTTON, TINKER_TOOLS, SHOVEL, 2)
+                    if not FindType(SHOVEL, Backpack()):
+                        log(f"Didn\'t manage to craft a tool...")
+                        exit()
+
+            UseObject(ObjAtLayer(LhandLayer()))
 
             WaitForTarget(2000)
             if TargetPresent():
                 WaitTargetXYZ(x, y, z)
                 WaitJournalLine(started, "|".join(
-                    SKIP_TILE_MESSAGES + NEXT_TRY_MESSAGES), 15000)
+                    BAD_TILE_MESSAGES + DEPLETED_TILE_MESSAGES + NEXT_TRY_MESSAGES), 15000)
 
-            if InJournalBetweenTimes("|".join(SKIP_TILE_MESSAGES), started, dt.now()) > 0:
+            if InJournalBetweenTimes("|".join(BAD_TILE_MESSAGES), started, dt.now()) > 0:
+                _bad = True
+                Bad_points.append([x, y, tile])
+                Wait(500)
+                break
+            if InJournalBetweenTimes("|".join(DEPLETED_TILE_MESSAGES), started, dt.now()) > 0:
+                for _x in range(x-2,x+2):
+                    for _y in range(y-2,y+2):
+                        # log(f"setting tile mined {_x}, {_y}")
+                        # Wait(50)
+                        set_tile_mined({'x' : _x, 'y' : _y})
                 Wait(500)
                 break
     else:
+        if not _bad: Bad_points.append([x, y, tile])
         print(f"Can't reach X: {x} Y: {y}")
 
 
 def distance_from_player(target_x: int, target_y: int) -> int:
+
     self_x = GetX(Self())
     self_y = GetY(Self())
-    return math.hypot(target_x - self_x, target_y - self_y)
+    _dt_started=dt.now()
+    # res = Dist(self_x,self_y,target_x,target_y)
+    res = math.hypot(target_x - self_x, target_y - self_y)
+    log(f"distance_calc took {dt.now()-_dt_started}")
+    return res
 
 
 def move_x_y(x: int, y: int) -> bool:
@@ -265,14 +405,40 @@ def move_x_y(x: int, y: int) -> bool:
     return True
 
 
+def goto_x_y(x: int, y: int, accuracy=1) -> bool:
+    log(f"Moving out towards {x}, {y}")
+    _try = 0
+    while not newMoveXY(x, y, True, accuracy, True):
+        if newMoveXY(x, y, True, accuracy, True):
+            return True
+        else:
+            log(f"Failed to reach point {x}, {y}")
+            _try += 1
+            Wait(100)
+            if _try > 10:
+                return False
+
+    log(f"Reached point {x}, {y}")
+    return True
+
 def unload_to_bank():
-    bank_x, bank_y = BANK_ENTRY
-    inside_x, inside_y = BANK_INSIDE
-    exit_x, exit_y = BANK_EXIT
-    move_x_y(bank_x, bank_y)
-    UseObject(BANK_ENTRY_DOOR)
-    Wait(2000)
-    move_x_y(inside_x, inside_y)
+    """
+    walks to bank, enters, and unloads PLANKS
+    """
+    log("Moving out to the bank...")
+
+    goto_x_y(*BANK_ENTRY, 1)
+    _point = (GetX(Self()), GetY(Self()))
+    # while not wait_for_result((GetX(Self()), GetY(Self())) != _point):
+    #     UseObject(BANK_ENTRY_DOOR)
+
+    while ( (GetX(Self()), GetY(Self())) == _point):
+        UseObject(BANK_ENTRY_DOOR)
+        Wait(500)
+
+    # TODO: no need to walk, just start using the fng bankbox
+    # NewMoveXY(*BANK_INSIDE, True, 1, True)
+    log("Opening the bank...")
     while LastContainer() != Backpack():
         UseObject(Backpack())
         Wait(1000)
@@ -283,26 +449,71 @@ def unload_to_bank():
         if attempt > 5:
             log("Failed to open bank")
             exit()
-        UOSay("bank")
-        Wait(1000)
-
-    #while FindType(INGOTS, Backpack()):
+        # UseFromGround(BANK_BOX_TYPE, 0xFFFF)
+        UseObject(BANK_BOX_ID)
+        Wait(500)
+    log("Unloading...")
     while FindTypesArrayEx([INGOTS] + GEMS, [0xFFFF], [Backpack()], [True]):
         MoveItem(FindItem(), -1, ObjAtLayer(BankLayer()), 0, 0, 0)
         Wait(2000)
 
+    log("Loading with ingots for tools production...")
     # We have to keep some Iron ingots to craft shovels\tools
     if not FindTypeEx(INGOTS, 0x0000, Backpack()):
         FindTypeEx(INGOTS, 0x0000, ObjAtLayer(BankLayer()))
         Grab(FindItem(), 30)
         Wait(2000)
 
-    move_x_y(exit_x, exit_y)
-    UseObject(BANK_EXIT_DOOR)
-    Wait(2000)
+    # TODO: repeat until really exited
+    log("Leaving the bank...")
 
+    NewMoveXY(*BANK_EXIT, True, 1, True)
+
+    _point = (GetX(Self()), GetY(Self()))
+    while ( (GetX(Self()), GetY(Self())) == _point):
+        UseObject(BANK_EXIT_DOOR)
+        Wait(500)
+
+def is_point_in_region(x, y):
+    """
+    returns True if cordinates are in rectangular region
+    REGION_BORDERS defined in adv_imports
+    """
+    if x > REGION_BORDERS['x_max'] or x < REGION_BORDERS['x_min'] or y > REGION_BORDERS['y_max'] or y < REGION_BORDERS['y_min']:
+        # log(f"Point is not in region {x},{y}")
+        # Wait(100)
+        return False
+    return True
+
+def find_vein():
+    log('Searching for avaliable veins...')
+    Wait(100)
+    for _r in range(1, 10):
+        _self_x, _self_y = GetX(Self()), GetY(Self())
+        found_tiles = find_tiles(_r, _self_x, _self_y)
+        for index in range(len(found_tiles)):
+            tile, x, y, z = found_tiles[index]
+            # if is_tile_mined({'x' : x, 'y' : y}):
+            #     log(f"tile is mined, {x,y}")
+            #     Wait(100)
+            # if not is_point_in_region(x, y):
+            #     log(f"point is not in region {x,y}")
+            #     Wait(100)
+
+            if not is_tile_mined({'x' : x, 'y' : y}) and is_point_in_region(x, y):
+                log(f'r={_r}, vein at: {x}, {y}')
+                return tile, x, y, z
+    log('no ready veins at the point')
+    return -1, _self_x, _self_y, z
 
 if __name__ == "__main__":
+    coordsFile = 'sos_coords_mining.dump'
+    Mined_tiles = load_pickle('mined_'+coordsFile)
+    log(f'Loaded {len(Mined_tiles)} mined tiles')
+
+    bad_points_file = 'sos_bad_points.dump'
+    Bad_points = load_pickle(bad_points_file)
+
     SetMoveOpenDoor(True)
     SetMoveThroughNPC(True)
     while not Dead():
@@ -310,9 +521,19 @@ if __name__ == "__main__":
             point_x, point_y = point
             log(f"Point: {point_x}, {point_y}")
             move_x_y(point_x, point_y)
-            tiles = find_tiles(GetX(Self()), GetY(Self()), TILE_SEARCH_RANGE)
-            sorted_tiles = sorted(
-                tiles, key=lambda tile: distance_from_player(tile[1], tile[2]))
-            for tile_counter in range(0, len(sorted_tiles), 4):
-                log(f"Tile #{tile_counter}")
-                mine(sorted_tiles[tile_counter])
+            log("Looking for tiles...")
+            # tiles = find_tiles(GetX(Self()), GetY(Self()), TILE_SEARCH_RANGE)
+            # log("Sorting tile...")
+            # self_x = GetX(Self())
+            # self_y = GetY(Self())
+            # sorted_tiles = sorted(
+            #     tiles, key=lambda tile: Dist(tile[1], tile[2], self_x, self_y))
+            # for tile_counter in range(0, len(sorted_tiles), 4):
+            # for tile_counter in range(0, len(sorted_tiles)):
+            while True:
+                tile, x, y, z = find_vein()
+                if tile == -1 : break
+                mine((tile,x,y,z))
+                save_pickle_to_file(Mined_tiles, 'mined_'+coordsFile)
+                save_pickle_to_file(Bad_points, bad_points_file)
+
