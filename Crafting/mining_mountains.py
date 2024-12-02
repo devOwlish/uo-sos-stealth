@@ -43,13 +43,13 @@ FORGE_LOCATION = (2477, 888)
 FORGE_POINT = (2479, 890)
 
 BANK_ENTRY = (2476, 861)
-BANK_ENTRY_DOOR = 0x4000F996 # 0x4000A9D1
+BANK_ENTRY_DOOR = 0x40013D55  # 0x4000A9D1
 BANK_INSIDE = (3438, 3422)
 BANK_EXIT = (3445, 3442)
-BANK_EXIT_DOOR = 0x4000AD4E
+BANK_EXIT_DOOR = 0x400140BF
 
 BANK_BOX_TYPE = 0x0436
-BANK_BOX_ID = 0x4000FC13 # 0x4000AC58
+BANK_BOX_ID = 0x40013FCE  # 0x4000AC58
 
 
 GUMP_TINKER_TOOLS_CATEGORY_TOOLS = 29
@@ -58,6 +58,19 @@ GUMP_TINKER_TOOLS_SHOWEL_BUTTON = 100
 GUMP_TINKER_ID = 0x7B28E708
 
 POINTS = [
+    (2488, 899),
+    (2482, 902),
+    (2476, 905),
+    (2465, 907),
+    (2457, 911),
+    (2448, 911),
+    (2437, 910),
+    (2426, 907),
+    (2411, 905),
+    (2398, 909),
+    (2390, 909),
+    (2377, 905),
+    (2362, 899),
     (2341, 872),
     (2369, 864),
     (2389, 849),
@@ -83,21 +96,13 @@ POINTS = [
     (2517, 888),
     (2510, 892),
     (2496, 897),
-    (2488, 899),
-    (2482, 902),
-    (2476, 905),
-    (2465, 907),
-    (2457, 911),
-    (2448, 911),
-    (2437, 910),
-    (2426, 907),
-    (2411, 905),
-    (2398, 909),
-    (2390, 909),
-    (2377, 905),
-    (2362, 899),
 ]
-
+BAD_LOCATIONS = [
+(2464, 821),
+(2465, 821),
+(2467, 821),
+(2466, 821),
+]
 FORGE = 0x10DE
 VERBOSE = True
 # Generic types
@@ -208,7 +213,7 @@ def is_tile_mined(tile):
 def log(message=""):
     if VERBOSE:
         AddToSystemJournal(f"[{inspect.stack()[1].function}] {message}")
-
+        print(f"[{inspect.stack()[1].function}] {message}")
 
 def cancel_targets():
     CancelWaitTarget()
@@ -316,8 +321,15 @@ def wait_for_gump(button: int) -> None:
 def mine(tile):
     tile, x, y, z = tile
     _bad = False
+    _start = dt.now()
+
+    if [x,y,tile] in Bad_points:
+        log("Skipping bad tile")
+        return
+
     if newMoveXY(x, y, True, 2, True):
         while not Dead():
+            ClearJournal()
             # Smelt and return back to mining point
             if Weight() > WEIGHT_TO_PACK:
                 Wait(1000)
@@ -328,8 +340,8 @@ def mine(tile):
                 unload_to_bank()
                 move_x_y(x, y)
 
-            started = dt.now()
             cancel_targets()
+
 
             if not GetType( ObjAtLayer(LhandLayer()))==SHOVEL:
                 while ObjAtLayer(LhandLayer()):
@@ -357,24 +369,28 @@ def mine(tile):
             WaitForTarget(2000)
             if TargetPresent():
                 WaitTargetXYZ(x, y, z)
-                WaitJournalLine(started, "|".join(
+                WaitJournalLine(_start, "|".join(
                     BAD_TILE_MESSAGES + DEPLETED_TILE_MESSAGES + NEXT_TRY_MESSAGES), 15000)
+                Wait(1000)
 
-            if InJournalBetweenTimes("|".join(BAD_TILE_MESSAGES), started, dt.now()) > 0:
-                _bad = True
+
+            if InJournalBetweenTimes("|".join(BAD_TILE_MESSAGES), _start, dt.now()) > 0:
                 Bad_points.append([x, y, tile])
                 Wait(500)
+                log("Bad tile")
                 break
-            if InJournalBetweenTimes("|".join(DEPLETED_TILE_MESSAGES), started, dt.now()) > 0:
+
+            if InJournalBetweenTimes("|".join(DEPLETED_TILE_MESSAGES), _start, dt.now()) > 0:
                 for _x in range(x-2,x+2):
                     for _y in range(y-2,y+2):
                         # log(f"setting tile mined {_x}, {_y}")
                         # Wait(50)
                         set_tile_mined({'x' : _x, 'y' : _y})
                 Wait(500)
+                log("Depleted tile")
                 break
     else:
-        if not _bad: Bad_points.append([x, y, tile])
+        Bad_points.append([x, y, tile])
         print(f"Can't reach X: {x} Y: {y}")
 
 
@@ -461,7 +477,7 @@ def unload_to_bank():
     # We have to keep some Iron ingots to craft shovels\tools
     if not FindTypeEx(INGOTS, 0x0000, Backpack()):
         FindTypeEx(INGOTS, 0x0000, ObjAtLayer(BankLayer()))
-        Grab(FindItem(), 30)
+        Grab(FindItem(), 80)
         Wait(2000)
 
     # TODO: repeat until really exited
@@ -488,25 +504,29 @@ def is_point_in_region(x, y):
 def find_vein():
     log('Searching for avaliable veins...')
     Wait(100)
-    for _r in range(1, 10):
-        _self_x, _self_y = GetX(Self()), GetY(Self())
-        found_tiles = find_tiles(_r, _self_x, _self_y)
-        for index in range(len(found_tiles)):
-            tile, x, y, z = found_tiles[index]
-            # if is_tile_mined({'x' : x, 'y' : y}):
-            #     log(f"tile is mined, {x,y}")
-            #     Wait(100)
-            # if not is_point_in_region(x, y):
-            #     log(f"point is not in region {x,y}")
-            #     Wait(100)
 
-            if not is_tile_mined({'x' : x, 'y' : y}) and is_point_in_region(x, y):
-                log(f'r={_r}, vein at: {x}, {y}')
-                return tile, x, y, z
+    _self_x, _self_y = GetX(Self()), GetY(Self())
+    found_tiles = find_tiles(5, _self_x, _self_y)
+    for index in range(len(found_tiles)):
+        tile, x, y, z = found_tiles[index]
+        # if is_tile_mined({'x' : x, 'y' : y}):
+        #     log(f"tile is mined, {x,y}")
+        #     Wait(100)
+        # if not is_point_in_region(x, y):
+        #     log(f"point is not in region {x,y}")
+        #     Wait(100)
+
+        if not is_tile_mined({'x' : x, 'y' : y}) and is_point_in_region(x, y) and not [x,y,tile] in Bad_points:
+            log(f'vein at: {x}, {y}')
+            return tile, x, y, z
+
     log('no ready veins at the point')
     return -1, _self_x, _self_y, z
 
 if __name__ == "__main__":
+    for location in BAD_LOCATIONS:
+        SetBadLocation(*location)
+    log("Bad location loaded")
     coordsFile = 'sos_coords_mining.dump'
     Mined_tiles = load_pickle('mined_'+coordsFile)
     log(f'Loaded {len(Mined_tiles)} mined tiles')
@@ -516,6 +536,7 @@ if __name__ == "__main__":
 
     SetMoveOpenDoor(True)
     SetMoveThroughNPC(True)
+
     while not Dead():
         for point in POINTS:
             point_x, point_y = point
@@ -532,8 +553,10 @@ if __name__ == "__main__":
             # for tile_counter in range(0, len(sorted_tiles)):
             while True:
                 tile, x, y, z = find_vein()
-                if tile == -1 : break
+                if tile == -1:
+                    break
                 mine((tile,x,y,z))
                 save_pickle_to_file(Mined_tiles, 'mined_'+coordsFile)
                 save_pickle_to_file(Bad_points, bad_points_file)
+                Wait(100)
 
