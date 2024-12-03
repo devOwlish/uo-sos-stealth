@@ -212,7 +212,7 @@ def lumberjacking(tile, x, y, packing): #: tuple[int, int, int, int]) -> None:
                 # to_ground()
                 unload_to_bank()
                 NewMoveXY(x, y, True, 1, True)
-            _started_chopping = dt.now() - timedelta(seconds=1)
+            _started_chopping = dt.now()
             UseObject(ObjAtLayer(_tool_layer))
             WaitForTarget(2000)
             if TargetPresent():
@@ -220,7 +220,7 @@ def lumberjacking(tile, x, y, packing): #: tuple[int, int, int, int]) -> None:
                 WaitJournalLine(_started_chopping, "|".join(NEXT_TRY_MESSAGES + SKIP_TILE_MESSAGES + BAD_POINT_MESSAGES),
                                 CHOP_DELAY)
                 # If WaitJournalLine timeout happened, then smth went po pizde
-                if dt.now() - timedelta(seconds=) >= _started_chopping+timedelta(milliseconds=CHOP_DELAY):
+                if dt.now() >= _started_chopping+timedelta(milliseconds=CHOP_DELAY):
                     logger.debug(f"{tile}: {x}, {y} WaitJournalLine timeout exceeded, bad tree?")
                     break
                 if InJournalBetweenTimes("|".join(BAD_POINT_MESSAGES), _started_chopping, dt.now()) > 0:
